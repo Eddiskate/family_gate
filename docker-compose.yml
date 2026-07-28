@@ -1,0 +1,10 @@
+services:
+  family-gate:
+    build: .
+    ports:
+      - "3036:3036"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

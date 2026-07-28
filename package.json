@@ -1,0 +1,18 @@
+{
+  "name": "family-gate",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w @family-gate/api",
+    "dev:web": "npm run start -w @family-gate/web",
+    "build": "npm run build -w @family-gate/shared && npm run build -w @family-gate/api && npm run build -w @family-gate/web",
+    "start": "npm run start -w @family-gate/api",
+    "typecheck": "npm run typecheck -w @family-gate/shared && npm run typecheck -w @family-gate/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
