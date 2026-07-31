@@ -29,6 +29,8 @@ export interface UsageTodayDto {
   serviceName: string;
   usedSeconds: number;
   dailyLimitSeconds: number;
+  bonusSeconds: number;
+  effectiveLimitSeconds: number;
   remainingSeconds: number;
   blocked: boolean;
   forceBlocked: boolean;
@@ -44,6 +46,7 @@ export interface UsageHistoryDto {
   serviceName: string;
   usedSeconds: number;
   dailyLimitSeconds: number;
+  bonusSeconds: number;
   blockedAt: string | null;
 }
 
@@ -71,4 +74,8 @@ export interface StatusDto {
 export interface UpdateLimitBody {
   dailyLimitSeconds: number;
   enabled?: boolean;
+}
+
+export interface AddBonusBody {
+  seconds: number;
 }

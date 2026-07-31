@@ -12,6 +12,8 @@ export type UsageSnapshot = {
   serviceName: string;
   usedSeconds: number;
   dailyLimitSeconds: number;
+  bonusSeconds: number;
+  effectiveLimitSeconds: number;
   remainingSeconds: number;
   blocked: boolean;
   forceBlocked: boolean;
@@ -26,6 +28,11 @@ type HaCallbacks = {
     forceBlocked: boolean,
   ) => Promise<void>;
   setLimitMinutes: (
+    clientId: number,
+    serviceId: string,
+    minutes: number,
+  ) => Promise<void>;
+  addBonusMinutes: (
     clientId: number,
     serviceId: string,
     minutes: number,
@@ -228,6 +235,55 @@ async function publishDiscoveryFor(
         device,
       },
     },
+    {
+      path: `sensor/${base}_bonus/config`,
+      payload: {
+        name: `${clientName} ${serviceName} bonus`,
+        object_id: `${base}_bonus`,
+        unique_id: `family_gate_${base}_bonus`,
+        state_topic: stateTopic,
+        value_template: "{{ value_json.bonus_minutes }}",
+        unit_of_measurement: "min",
+        icon: "mdi:plus-circle-outline",
+        device,
+      },
+    },
+    {
+      path: `button/${base}_bonus_15/config`,
+      payload: {
+        name: `${clientName} ${serviceName} +15 min`,
+        object_id: `${base}_bonus_15`,
+        unique_id: `family_gate_${base}_bonus_15`,
+        command_topic: `${env.mqtt.baseTopic}/${clientSlug}/${serviceId}/set/bonus`,
+        payload_press: "15",
+        icon: "mdi:timer-plus-outline",
+        device,
+      },
+    },
+    {
+      path: `button/${base}_bonus_30/config`,
+      payload: {
+        name: `${clientName} ${serviceName} +30 min`,
+        object_id: `${base}_bonus_30`,
+        unique_id: `family_gate_${base}_bonus_30`,
+        command_topic: `${env.mqtt.baseTopic}/${clientSlug}/${serviceId}/set/bonus`,
+        payload_press: "30",
+        icon: "mdi:timer-plus-outline",
+        device,
+      },
+    },
+    {
+      path: `button/${base}_bonus_60/config`,
+      payload: {
+        name: `${clientName} ${serviceName} +1 h`,
+        object_id: `${base}_bonus_60`,
+        unique_id: `family_gate_${base}_bonus_60`,
+        command_topic: `${env.mqtt.baseTopic}/${clientSlug}/${serviceId}/set/bonus`,
+        payload_press: "60",
+        icon: "mdi:timer-plus-outline",
+        device,
+      },
+    },
   ];
 
   for (const s of sensors) {
@@ -257,6 +313,8 @@ export function publishUsageStates(snapshots: UsageSnapshot[]): void {
       used_minutes: Math.floor(snap.usedSeconds / 60),
       remaining_minutes: Math.ceil(remaining / 60),
       limit_minutes: Math.floor(snap.dailyLimitSeconds / 60),
+      bonus_minutes: Math.floor(snap.bonusSeconds / 60),
+      effective_limit_minutes: Math.floor(snap.effectiveLimitSeconds / 60),
       blocked: snap.blocked ? "true" : "false",
       allowed: snap.blocked ? "false" : "true",
       force_blocked: snap.forceBlocked ? "true" : "false",
@@ -290,6 +348,11 @@ async function handleCommand(topic: string, payload: string): Promise<void> {
       if (Number.isFinite(minutes) && minutes >= 0) {
         await callbacks.setLimitMinutes(clientRow.id, serviceId, minutes);
       }
+    } else if (action === "bonus") {
+      const minutes = Number.parseInt(payload, 10);
+      if (Number.isFinite(minutes) && minutes > 0) {
+        await callbacks.addBonusMinutes(clientRow.id, serviceId, minutes);
+      }
     }
   } catch (err) {
     console.error("[mqtt] command failed", topic, err);
@@ -310,6 +373,7 @@ export function buildSnapshots(): UsageSnapshot[] {
          l.enabled,
          l.force_blocked,
          COALESCE(u.used_seconds, 0) AS used_seconds,
+         COALESCE(u.bonus_seconds, 0) AS bonus_seconds,
          CASE WHEN EXISTS (
            SELECT 1 FROM sessions sess
            WHERE sess.client_id = c.id AND sess.service_id = s.id AND sess.ended_at IS NULL
@@ -330,12 +394,14 @@ export function buildSnapshots(): UsageSnapshot[] {
     enabled: number;
     force_blocked: number;
     used_seconds: number;
+    bonus_seconds: number;
     active_session: number;
   }>;
 
   return rows.map((r) => {
-    const remaining = Math.max(0, r.daily_limit_seconds - r.used_seconds);
-    const overLimit = r.enabled === 1 && r.used_seconds >= r.daily_limit_seconds;
+    const effective = r.daily_limit_seconds + r.bonus_seconds;
+    const remaining = Math.max(0, effective - r.used_seconds);
+    const overLimit = r.enabled === 1 && r.used_seconds >= effective;
     const blocked = r.force_blocked === 1 || overLimit;
     return {
       clientId: r.client_id,
@@ -345,6 +411,8 @@ export function buildSnapshots(): UsageSnapshot[] {
       serviceName: r.service_name,
       usedSeconds: r.used_seconds,
       dailyLimitSeconds: r.daily_limit_seconds,
+      bonusSeconds: r.bonus_seconds,
+      effectiveLimitSeconds: effective,
       remainingSeconds: remaining,
       blocked,
       forceBlocked: r.force_blocked === 1,

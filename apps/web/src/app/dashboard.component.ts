@@ -63,11 +63,21 @@ import { Router } from '@angular/router';
                 </div>
                 <p class="meta">
                   {{ formatMin(row.usedSeconds) }} / {{ formatMin(row.dailyLimitSeconds) }}
+                  @if (row.bonusSeconds > 0) {
+                    <span class="bonus">(+{{ formatMin(row.bonusSeconds) }} bonus)</span>
+                  }
                   · zostało {{ formatMin(row.remainingSeconds) }}
                 </p>
+                <div class="bonus-row">
+                  <span class="bonus-label">Dodaj czas</span>
+                  <button type="button" class="ghost" (click)="addBonus(row, 15)">+15 min</button>
+                  <button type="button" class="ghost" (click)="addBonus(row, 30)">+30 min</button>
+                  <button type="button" class="ghost" (click)="addBonus(row, 60)">+1 h</button>
+                  <button type="button" class="ghost" (click)="addBonus(row, 120)">+2 h</button>
+                </div>
                 <div class="actions">
                   <label>
-                    Limit (min)
+                    Limit dzienny (min)
                     <input
                       type="number"
                       min="0"
@@ -216,6 +226,36 @@ import { Router } from '@angular/router';
         color: var(--muted);
         font-size: 0.9rem;
       }
+      .bonus {
+        color: var(--accent);
+        font-weight: 600;
+      }
+      .bonus-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        align-items: center;
+        margin-bottom: 0.65rem;
+      }
+      .bonus-label {
+        font-size: 0.75rem;
+        color: var(--muted);
+        margin-right: 0.15rem;
+      }
+      .bonus-row button {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.35rem 0.55rem;
+        background: var(--bg);
+        color: var(--text);
+        font: inherit;
+        font-size: 0.8rem;
+        cursor: pointer;
+      }
+      .bonus-row button:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
       .actions {
         display: flex;
         flex-wrap: wrap;
@@ -315,14 +355,21 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
   progress(row: UsageToday): number {
-    if (row.dailyLimitSeconds <= 0) return 100;
-    return Math.min(100, (row.usedSeconds / row.dailyLimitSeconds) * 100);
+    if (row.effectiveLimitSeconds <= 0) return 100;
+    return Math.min(100, (row.usedSeconds / row.effectiveLimitSeconds) * 100);
   }
 
   formatMin(seconds: number): string {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m}m ${s.toString().padStart(2, '0')}s`;
+  }
+
+  addBonus(row: UsageToday, minutes: number): void {
+    this.api.addBonus(row.clientId, row.serviceId, minutes * 60).subscribe({
+      next: () => this.refresh(),
+      error: () => (this.error = 'Dodanie czasu nieudane.'),
+    });
   }
 
   saveLimit(row: UsageToday): void {

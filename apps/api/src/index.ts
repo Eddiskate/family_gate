@@ -7,6 +7,7 @@ import { initDb } from "./db.js";
 import { startMqtt, stopMqtt } from "./mqtt.js";
 import { registerRoutes } from "./routes.js";
 import {
+  addBonusSeconds,
   setForceBlocked,
   setLimitSeconds,
   startWorker,
@@ -43,6 +44,9 @@ async function main(): Promise<void> {
     setForceBlocked,
     setLimitMinutes: async (clientId, serviceId, minutes) => {
       await setLimitSeconds(clientId, serviceId, minutes * 60);
+    },
+    addBonusMinutes: async (clientId, serviceId, minutes) => {
+      await addBonusSeconds(clientId, serviceId, minutes * 60);
     },
   });
 

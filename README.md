@@ -15,15 +15,24 @@ AdGuard: `http://home.blackpage.pl:3035`
 
 ## EasyPanel / Docker
 
-1. Skopiuj `.env.example` → `.env` i uzupełnij:
-   - `ADGUARD_USER` / `ADGUARD_PASSWORD`
-   - `PARENT_PASSWORD` (panel WWW)
-   - opcjonalnie `MQTT_URL`, `MQTT_USER`, `MQTT_PASSWORD`
-2. Volume na dane: `/app/data` (SQLite).
-3. Port: `3036`.
-4. Build z Dockerfile w root repo.
+**Ważne:** build musi iść z **roota repo** (tam jest `Dockerfile`).  
+Jeśli EasyPanel buduje z `apps/web`, dostaniesz `open Dockerfile: no such file or directory`.
 
-Przykład lokalnie:
+### Ustawienia usługi w EasyPanel
+
+| Pole | Wartość |
+|---|---|
+| Build context / Source directory | `.` (root repo, **nie** `apps/web`) |
+| Dockerfile | `Dockerfile` |
+| Port | `3036` |
+| Volume | host path → `/app/data` |
+
+Zmienne wklej w **Environment** (runtime), **nie** w Build Args — sekrety w build-args lądują w historii obrazu.
+
+Przykład `MQTT_URL`: `mqtt://192.168.100.107:1883` (IP brokera MQTT).  
+**Nie** używaj `mqtt://0.0.0.0:1883` — `0.0.0.0` to adres nasłuchu, nie host do połączenia.
+
+Lokalnie:
 
 ```bash
 cp .env.example .env

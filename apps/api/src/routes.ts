@@ -1,10 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { UpdateLimitBody } from "@family-gate/shared";
+import type { AddBonusBody, UpdateLimitBody } from "@family-gate/shared";
 import { env, isAdguardConfigured, isMqttEnabled } from "./config.js";
 import { getDb, parseIps, type ClientRow } from "./db.js";
 import { isMqttConnected, buildSnapshots } from "./mqtt.js";
 import { todayInTimezone } from "./time.js";
 import {
+  addBonusSeconds,
   getWorkerState,
   manualBlock,
   manualUnblock,
@@ -110,6 +111,8 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       serviceName: s.serviceName,
       usedSeconds: s.usedSeconds,
       dailyLimitSeconds: s.dailyLimitSeconds,
+      bonusSeconds: s.bonusSeconds,
+      effectiveLimitSeconds: s.effectiveLimitSeconds,
       remainingSeconds: s.remainingSeconds,
       blocked: s.blocked,
       forceBlocked: s.forceBlocked,
@@ -133,6 +136,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
            s.name AS service_name,
            u.used_seconds,
            u.daily_limit_seconds,
+           COALESCE(u.bonus_seconds, 0) AS bonus_seconds,
            u.blocked_at
          FROM usage_daily u
          JOIN clients c ON c.id = u.client_id
@@ -148,6 +152,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       service_name: string;
       used_seconds: number;
       daily_limit_seconds: number;
+      bonus_seconds: number;
       blocked_at: string | null;
     }>;
 
@@ -159,6 +164,7 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       serviceName: r.service_name,
       usedSeconds: r.used_seconds,
       dailyLimitSeconds: r.daily_limit_seconds,
+      bonusSeconds: r.bonus_seconds,
       blockedAt: r.blocked_at,
     }));
   });
@@ -200,6 +206,22 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     Params: { id: string; service: string };
   }>("/api/clients/:id/services/:service/reset-today", async (request) => {
     await resetTodayUsage(Number(request.params.id), request.params.service);
+    return { ok: true };
+  });
+
+  app.post<{
+    Params: { id: string; service: string };
+    Body: AddBonusBody;
+  }>("/api/clients/:id/services/:service/bonus", async (request, reply) => {
+    const seconds = request.body?.seconds;
+    if (typeof seconds !== "number" || seconds <= 0) {
+      return reply.code(400).send({ error: "seconds must be > 0" });
+    }
+    await addBonusSeconds(
+      Number(request.params.id),
+      request.params.service,
+      Math.floor(seconds),
+    );
     return { ok: true };
   });
 }

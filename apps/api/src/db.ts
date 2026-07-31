@@ -30,6 +30,7 @@ export type UsageDailyRow = {
   date: string;
   used_seconds: number;
   daily_limit_seconds: number;
+  bonus_seconds: number;
   blocked_at: string | null;
 };
 
@@ -87,6 +88,7 @@ export function initDb(): Database.Database {
       date TEXT NOT NULL,
       used_seconds INTEGER NOT NULL DEFAULT 0,
       daily_limit_seconds INTEGER NOT NULL DEFAULT 0,
+      bonus_seconds INTEGER NOT NULL DEFAULT 0,
       blocked_at TEXT,
       PRIMARY KEY (client_id, service_id, date)
     );
@@ -111,8 +113,19 @@ export function initDb(): Database.Database {
       ON usage_daily(date);
   `);
 
+  migrateSchema();
   seedIfEmpty();
   return db;
+}
+
+function migrateSchema(): void {
+  const cols = db.prepare("PRAGMA table_info(usage_daily)").all() as Array<{ name: string }>;
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("bonus_seconds")) {
+    db.exec(
+      "ALTER TABLE usage_daily ADD COLUMN bonus_seconds INTEGER NOT NULL DEFAULT 0",
+    );
+  }
 }
 
 function seedIfEmpty(): void {

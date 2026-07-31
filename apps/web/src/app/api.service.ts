@@ -9,6 +9,8 @@ export interface UsageToday {
   serviceName: string;
   usedSeconds: number;
   dailyLimitSeconds: number;
+  bonusSeconds: number;
+  effectiveLimitSeconds: number;
   remainingSeconds: number;
   blocked: boolean;
   forceBlocked: boolean;
@@ -24,6 +26,7 @@ export interface UsageHistory {
   serviceName: string;
   usedSeconds: number;
   dailyLimitSeconds: number;
+  bonusSeconds: number;
   blockedAt: string | null;
 }
 
@@ -88,6 +91,17 @@ export class ApiService {
     return this.http.post<{ ok: boolean }>(
       `/api/clients/${clientId}/services/${serviceId}/reset-today`,
       {},
+    );
+  }
+
+  addBonus(
+    clientId: number,
+    serviceId: string,
+    seconds: number,
+  ): Observable<{ ok: boolean }> {
+    return this.http.post<{ ok: boolean }>(
+      `/api/clients/${clientId}/services/${serviceId}/bonus`,
+      { seconds },
     );
   }
 }

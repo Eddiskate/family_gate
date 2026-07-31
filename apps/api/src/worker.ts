@@ -211,8 +211,8 @@ function ensureUsageRow(clientId: number, serviceId: string, date: string): void
     .get(clientId, serviceId) as { daily_limit_seconds: number } | undefined;
 
   db.prepare(
-    `INSERT INTO usage_daily (client_id, service_id, date, used_seconds, daily_limit_seconds, blocked_at)
-     VALUES (?, ?, ?, 0, ?, NULL)
+    `INSERT INTO usage_daily (client_id, service_id, date, used_seconds, daily_limit_seconds, bonus_seconds, blocked_at)
+     VALUES (?, ?, ?, 0, ?, 0, NULL)
      ON CONFLICT(client_id, service_id, date) DO NOTHING`,
   ).run(clientId, serviceId, date, limit?.daily_limit_seconds ?? 0);
 }
@@ -255,6 +255,7 @@ async function syncBlocks(): Promise<void> {
          l.enabled,
          l.force_blocked,
          COALESCE(u.used_seconds, 0) AS used_seconds,
+         COALESCE(u.bonus_seconds, 0) AS bonus_seconds,
          u.blocked_at
        FROM clients c
        JOIN limits l ON l.client_id = c.id
@@ -270,13 +271,15 @@ async function syncBlocks(): Promise<void> {
     enabled: number;
     force_blocked: number;
     used_seconds: number;
+    bonus_seconds: number;
     blocked_at: string | null;
   }>;
 
   for (const row of rows) {
+    const effectiveLimit = row.daily_limit_seconds + row.bonus_seconds;
     const shouldBlock =
       row.force_blocked === 1 ||
-      (row.enabled === 1 && row.used_seconds >= row.daily_limit_seconds);
+      (row.enabled === 1 && row.used_seconds >= effectiveLimit);
 
     try {
       await setClientBlockedService(row.adguard_name, row.service_id, shouldBlock);
@@ -331,8 +334,8 @@ async function ensureDailyReset(): Promise<void> {
   }>;
 
   const insert = db.prepare(
-    `INSERT INTO usage_daily (client_id, service_id, date, used_seconds, daily_limit_seconds, blocked_at)
-     VALUES (?, ?, ?, 0, ?, NULL)
+    `INSERT INTO usage_daily (client_id, service_id, date, used_seconds, daily_limit_seconds, bonus_seconds, blocked_at)
+     VALUES (?, ?, ?, 0, ?, 0, NULL)
      ON CONFLICT(client_id, service_id, date) DO NOTHING`,
   );
 
@@ -418,6 +421,35 @@ export async function setLimitSeconds(
   publishUsageStates(buildSnapshots());
 }
 
+export async function addBonusSeconds(
+  clientId: number,
+  serviceId: string,
+  seconds: number,
+): Promise<void> {
+  const amount = Math.max(0, Math.floor(seconds));
+  if (amount <= 0) {
+    throw new Error("seconds must be > 0");
+  }
+
+  const db = getDb();
+  const date = todayInTimezone();
+  ensureUsageRow(clientId, serviceId, date);
+
+  db.prepare(
+    `UPDATE usage_daily
+     SET bonus_seconds = bonus_seconds + ?, blocked_at = NULL
+     WHERE client_id = ? AND service_id = ? AND date = ?`,
+  ).run(amount, clientId, serviceId, date);
+
+  // clear force block so bonus can actually unlock watching
+  db.prepare(
+    `UPDATE limits SET force_blocked = 0 WHERE client_id = ? AND service_id = ?`,
+  ).run(clientId, serviceId);
+
+  await syncBlocks();
+  publishUsageStates(buildSnapshots());
+}
+
 export async function resetTodayUsage(
   clientId: number,
   serviceId: string,
@@ -426,7 +458,7 @@ export async function resetTodayUsage(
   const date = todayInTimezone();
   ensureUsageRow(clientId, serviceId, date);
   db.prepare(
-    `UPDATE usage_daily SET used_seconds = 0, blocked_at = NULL
+    `UPDATE usage_daily SET used_seconds = 0, bonus_seconds = 0, blocked_at = NULL
      WHERE client_id = ? AND service_id = ? AND date = ?`,
   ).run(clientId, serviceId, date);
 

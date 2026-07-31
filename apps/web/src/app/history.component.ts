@@ -47,6 +47,7 @@ import { Router } from '@angular/router';
               <th>Usługa</th>
               <th>Zużycie</th>
               <th>Limit</th>
+              <th>Bonus</th>
               <th>Blokada</th>
             </tr>
           </thead>
@@ -58,11 +59,12 @@ import { Router } from '@angular/router';
                 <td>{{ row.serviceName }}</td>
                 <td>{{ formatMin(row.usedSeconds) }}</td>
                 <td>{{ formatMin(row.dailyLimitSeconds) }}</td>
+                <td>{{ row.bonusSeconds ? formatMin(row.bonusSeconds) : '—' }}</td>
                 <td>{{ row.blockedAt ? 'tak' : '—' }}</td>
               </tr>
             } @empty {
               <tr>
-                <td colspan="6" class="empty">Brak danych w wybranym zakresie.</td>
+                <td colspan="7" class="empty">Brak danych w wybranym zakresie.</td>
               </tr>
             }
           </tbody>
