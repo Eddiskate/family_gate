@@ -4,6 +4,7 @@ import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import { env } from "./config.js";
 import { initDb } from "./db.js";
+import { seedChoresIfEmpty } from "./chores.js";
 import { startMqtt, stopMqtt } from "./mqtt.js";
 import { registerRoutes } from "./routes.js";
 import {
@@ -16,6 +17,7 @@ import {
 
 async function main(): Promise<void> {
   initDb();
+  seedChoresIfEmpty();
 
   const app = Fastify({
     logger: true,

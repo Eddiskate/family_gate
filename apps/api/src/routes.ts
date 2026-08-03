@@ -1,8 +1,20 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { AddBonusBody, UpdateLimitBody } from "@family-gate/shared";
-import { env, isAdguardConfigured, isMqttEnabled } from "./config.js";
+import { env, isAdguardConfigured, isMqttEnabled, isSmtpConfigured } from "./config.js";
+import {
+  completeTask,
+  createGroup,
+  createTask,
+  deleteGroup,
+  deleteTask,
+  listDueTasks,
+  listGroupsWithTasks,
+  updateGroup,
+  updateTask,
+  type RecurrenceType,
+} from "./chores.js";
 import { getDb, parseIps, type ClientRow } from "./db.js";
-import { isMqttConnected, buildSnapshots } from "./mqtt.js";
+import { isMqttConnected, buildSnapshots, publishChoreStates } from "./mqtt.js";
 import { todayInTimezone } from "./time.js";
 import {
   addBonusSeconds,
@@ -75,6 +87,12 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       mqtt: {
         enabled: isMqttEnabled(),
         connected: isMqttConnected(),
+      },
+      smtp: {
+        configured: isSmtpConfigured(),
+      },
+      chores: {
+        dueCount: listDueTasks().length,
       },
     };
   });
@@ -223,5 +241,111 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
       Math.floor(seconds),
     );
     return { ok: true };
+  });
+
+  app.get("/api/chores/due", async () => listDueTasks());
+
+  app.get("/api/chores/groups", async () => listGroupsWithTasks());
+
+  app.post<{
+    Body: { name?: string; description?: string; sortOrder?: number };
+  }>("/api/chores/groups", async (request, reply) => {
+    if (!request.body?.name?.trim()) {
+      return reply.code(400).send({ error: "name required" });
+    }
+    return createGroup({
+      name: request.body.name,
+      description: request.body.description,
+      sortOrder: request.body.sortOrder,
+    });
+  });
+
+  app.put<{
+    Params: { id: string };
+    Body: { name?: string; description?: string; sortOrder?: number };
+  }>("/api/chores/groups/:id", async (request, reply) => {
+    try {
+      return updateGroup(Number(request.params.id), request.body ?? {});
+    } catch (err) {
+      return reply.code(404).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/chores/groups/:id", async (request) => {
+    deleteGroup(Number(request.params.id));
+    return { ok: true };
+  });
+
+  app.post<{
+    Body: {
+      groupId?: number;
+      title?: string;
+      notes?: string;
+      recurrenceType?: RecurrenceType;
+      recurrenceInterval?: number;
+      weekday?: number | null;
+      nextDueDate?: string | null;
+      notifyEmail?: boolean;
+      enabled?: boolean;
+    };
+  }>("/api/chores/tasks", async (request, reply) => {
+    const body = request.body;
+    if (!body?.groupId || !body.title?.trim() || !body.recurrenceType) {
+      return reply.code(400).send({ error: "groupId, title, recurrenceType required" });
+    }
+    try {
+      return createTask({
+        groupId: body.groupId,
+        title: body.title,
+        notes: body.notes,
+        recurrenceType: body.recurrenceType,
+        recurrenceInterval: body.recurrenceInterval,
+        weekday: body.weekday,
+        nextDueDate: body.nextDueDate,
+        notifyEmail: body.notifyEmail,
+        enabled: body.enabled,
+      });
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.put<{
+    Params: { id: string };
+    Body: {
+      groupId?: number;
+      title?: string;
+      notes?: string;
+      recurrenceType?: RecurrenceType;
+      recurrenceInterval?: number;
+      weekday?: number | null;
+      nextDueDate?: string | null;
+      notifyEmail?: boolean;
+      enabled?: boolean;
+    };
+  }>("/api/chores/tasks/:id", async (request, reply) => {
+    try {
+      return updateTask(Number(request.params.id), request.body ?? {});
+    } catch (err) {
+      return reply.code(404).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/chores/tasks/:id", async (request) => {
+    deleteTask(Number(request.params.id));
+    return { ok: true };
+  });
+
+  app.post<{
+    Params: { id: string };
+    Body: { nextDueDate?: string | null; notes?: string };
+  }>("/api/chores/tasks/:id/complete", async (request, reply) => {
+    try {
+      const task = completeTask(Number(request.params.id), request.body ?? {});
+      publishChoreStates();
+      return task;
+    } catch (err) {
+      return reply.code(404).send({ error: err instanceof Error ? err.message : String(err) });
+    }
   });
 }

@@ -1,5 +1,6 @@
 import type { MqttClient } from "mqtt";
 import mqtt from "mqtt";
+import { completeTask, listDueTasks, listGroupsWithTasks, type TaskDto } from "./chores.js";
 import { env, isMqttEnabled } from "./config.js";
 import { getDb, type ClientRow } from "./db.js";
 import { slugify, todayInTimezone } from "./time.js";
@@ -68,7 +69,9 @@ export async function startMqtt(cbs: HaCallbacks): Promise<void> {
     console.log("[mqtt] connected");
     void publishDiscoveryAll();
     publishUsageStates(buildSnapshots());
+    publishChoreStates();
     client?.subscribe(`${env.mqtt.baseTopic}/+/+/set/#`);
+    client?.subscribe(`${env.mqtt.baseTopic}/chores/+/set/#`);
   });
 
   client.on("reconnect", () => {
@@ -105,6 +108,15 @@ function entityBase(clientSlug: string, serviceId: string): string {
   return `${clientSlug}_${serviceId}`;
 }
 
+function choresDevice() {
+  return {
+    identifiers: ["family_gate_chores"],
+    name: "Family Gate Zadania",
+    manufacturer: "Family Gate",
+    model: "Household chores",
+  };
+}
+
 async function publishDiscoveryAll(): Promise<void> {
   const db = getDb();
   const rows = db
@@ -132,6 +144,183 @@ async function publishDiscoveryAll(): Promise<void> {
       row.service_id,
       row.service_name,
       row.id,
+    );
+  }
+
+  publishChoresDiscovery();
+}
+
+function publishChoresDiscovery(): void {
+  if (!client || !connected) return;
+  const prefix = env.mqtt.discoveryPrefix;
+  const device = choresDevice();
+  const summaryTopic = `${env.mqtt.baseTopic}/chores/summary/state`;
+
+  const summaryEntities = [
+    {
+      path: "sensor/family_gate_chores_due/config",
+      payload: {
+        name: "Zadania do zrobienia",
+        object_id: "family_gate_chores_due",
+        unique_id: "family_gate_chores_due",
+        state_topic: summaryTopic,
+        value_template: "{{ value_json.due_count }}",
+        icon: "mdi:checkbox-marked-outline",
+        device,
+      },
+    },
+    {
+      path: "sensor/family_gate_chores_overdue/config",
+      payload: {
+        name: "Zadania zaległe",
+        object_id: "family_gate_chores_overdue",
+        unique_id: "family_gate_chores_overdue",
+        state_topic: summaryTopic,
+        value_template: "{{ value_json.overdue_count }}",
+        icon: "mdi:alert-circle-outline",
+        device,
+      },
+    },
+    {
+      path: "binary_sensor/family_gate_chores_any_due/config",
+      payload: {
+        name: "Są zadania do zrobienia",
+        object_id: "family_gate_chores_any_due",
+        unique_id: "family_gate_chores_any_due",
+        state_topic: summaryTopic,
+        value_template: "{{ value_json.any_due }}",
+        payload_on: "true",
+        payload_off: "false",
+        device_class: "problem",
+        device,
+      },
+    },
+  ];
+
+  for (const s of summaryEntities) {
+    const key = `chores:${s.path}`;
+    if (discovered.has(key)) continue;
+    client.publish(`${prefix}/${s.path}`, JSON.stringify(s.payload), {
+      retain: true,
+      qos: 1,
+    });
+    discovered.add(key);
+  }
+
+  const tasks = listGroupsWithTasks().flatMap((g) => g.tasks);
+  for (const task of tasks) {
+    publishTaskDiscovery(task);
+  }
+}
+
+function publishTaskDiscovery(task: TaskDto): void {
+  if (!client || !connected) return;
+  const key = `chore_task_${task.id}`;
+  if (discovered.has(key)) return;
+
+  const prefix = env.mqtt.discoveryPrefix;
+  const device = choresDevice();
+  const stateTopic = `${env.mqtt.baseTopic}/chores/task_${task.id}/state`;
+  const objectBase = `chore_${task.id}_${slugify(task.title)}`;
+
+  const entities = [
+    {
+      path: `binary_sensor/${objectBase}_due/config`,
+      payload: {
+        name: `${task.groupName}: ${task.title}`,
+        object_id: `${objectBase}_due`,
+        unique_id: `family_gate_${objectBase}_due`,
+        state_topic: stateTopic,
+        value_template: "{{ value_json.needs_action }}",
+        payload_on: "true",
+        payload_off: "false",
+        device_class: "problem",
+        device,
+      },
+    },
+    {
+      path: `sensor/${objectBase}_next_due/config`,
+      payload: {
+        name: `${task.groupName}: ${task.title} termin`,
+        object_id: `${objectBase}_next_due`,
+        unique_id: `family_gate_${objectBase}_next_due`,
+        state_topic: stateTopic,
+        value_template: "{{ value_json.next_due_date }}",
+        icon: "mdi:calendar",
+        device,
+      },
+    },
+    {
+      path: `sensor/${objectBase}_status/config`,
+      payload: {
+        name: `${task.groupName}: ${task.title} status`,
+        object_id: `${objectBase}_status`,
+        unique_id: `family_gate_${objectBase}_status`,
+        state_topic: stateTopic,
+        value_template: "{{ value_json.status }}",
+        icon: "mdi:list-status",
+        device,
+      },
+    },
+    {
+      path: `button/${objectBase}_complete/config`,
+      payload: {
+        name: `${task.groupName}: ${task.title} wykonano`,
+        object_id: `${objectBase}_complete`,
+        unique_id: `family_gate_${objectBase}_complete`,
+        command_topic: `${env.mqtt.baseTopic}/chores/task_${task.id}/set/complete`,
+        payload_press: "PRESS",
+        icon: "mdi:check-circle-outline",
+        device,
+      },
+    },
+  ];
+
+  for (const s of entities) {
+    client.publish(`${prefix}/${s.path}`, JSON.stringify(s.payload), {
+      retain: true,
+      qos: 1,
+    });
+  }
+  discovered.add(key);
+}
+
+export function publishChoreStates(): void {
+  if (!client || !connected) return;
+
+  // ensure discovery for any new tasks
+  publishChoresDiscovery();
+
+  const groups = listGroupsWithTasks();
+  const tasks = groups.flatMap((g) => g.tasks);
+  const due = listDueTasks();
+  const overdueCount = due.filter((t) => t.status === "overdue").length;
+
+  client.publish(
+    `${env.mqtt.baseTopic}/chores/summary/state`,
+    JSON.stringify({
+      due_count: due.length,
+      overdue_count: overdueCount,
+      any_due: due.length > 0 ? "true" : "false",
+      today: todayInTimezone(),
+    }),
+    { retain: true, qos: 0 },
+  );
+
+  for (const task of tasks) {
+    const needsAction = task.status === "overdue" || task.status === "due_today";
+    client.publish(
+      `${env.mqtt.baseTopic}/chores/task_${task.id}/state`,
+      JSON.stringify({
+        id: task.id,
+        title: task.title,
+        group: task.groupName,
+        status: task.status,
+        next_due_date: task.nextDueDate ?? "",
+        needs_action: needsAction ? "true" : "false",
+        enabled: task.enabled ? "true" : "false",
+      }),
+      { retain: true, qos: 0 },
     );
   }
 }
@@ -327,11 +516,31 @@ export function publishUsageStates(snapshots: UsageSnapshot[]): void {
 
 async function handleCommand(topic: string, payload: string): Promise<void> {
   if (!callbacks) return;
-  // family_gate/{clientSlug}/{serviceId}/set/switch|limit
   const parts = topic.split("/");
+  if (parts[0] !== env.mqtt.baseTopic) return;
+
+  // family_gate/chores/task_{id}/set/complete
+  if (parts[1] === "chores" && parts[3] === "set") {
+    const taskPart = parts[2] ?? "";
+    const action = parts[4];
+    const match = /^task_(\d+)$/.exec(taskPart);
+    if (!match) return;
+    const taskId = Number(match[1]);
+    try {
+      if (action === "complete") {
+        completeTask(taskId);
+        publishChoreStates();
+      }
+    } catch (err) {
+      console.error("[mqtt] chore command failed", topic, err);
+    }
+    return;
+  }
+
+  // family_gate/{clientSlug}/{serviceId}/set/switch|limit|bonus
   if (parts.length < 5) return;
-  const [base, clientSlug, serviceId, set, action] = parts;
-  if (base !== env.mqtt.baseTopic || set !== "set") return;
+  const [, clientSlug, serviceId, set, action] = parts;
+  if (set !== "set") return;
 
   const db = getDb();
   const clients = db.prepare("SELECT * FROM clients WHERE active = 1").all() as ClientRow[];
@@ -341,7 +550,6 @@ async function handleCommand(topic: string, payload: string): Promise<void> {
   try {
     if (action === "switch") {
       const on = payload.trim().toUpperCase() === "ON";
-      // ON = allowed (not force blocked), OFF = force blocked
       await callbacks.setForceBlocked(clientRow.id, serviceId, !on);
     } else if (action === "limit") {
       const minutes = Number.parseInt(payload, 10);

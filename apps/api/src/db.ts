@@ -107,10 +107,43 @@ export function initDb(): Database.Database {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS task_groups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER NOT NULL REFERENCES task_groups(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      notes TEXT NOT NULL DEFAULT '',
+      recurrence_type TEXT NOT NULL,
+      recurrence_interval INTEGER NOT NULL DEFAULT 1,
+      weekday INTEGER,
+      next_due_date TEXT,
+      last_done_at TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      notify_email INTEGER NOT NULL DEFAULT 0,
+      last_notified_date TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS task_completions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      done_at TEXT NOT NULL,
+      previous_due_date TEXT,
+      next_due_date TEXT,
+      notes TEXT NOT NULL DEFAULT ''
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_open
       ON sessions(client_id, service_id, ended_at);
     CREATE INDEX IF NOT EXISTS idx_usage_date
       ON usage_daily(date);
+    CREATE INDEX IF NOT EXISTS idx_tasks_due
+      ON tasks(next_due_date);
   `);
 
   migrateSchema();

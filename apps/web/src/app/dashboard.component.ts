@@ -27,11 +27,18 @@ import { Router } from '@angular/router';
           </p>
         </div>
         <nav>
-          <a routerLink="/">Dziś</a>
+          <a routerLink="/">TV</a>
+          <a routerLink="/chores">Zadania</a>
           <a routerLink="/history">Archiwum</a>
           <button type="button" class="linkish" (click)="logout()">Wyloguj</button>
         </nav>
       </header>
+
+      @if (status?.chores?.dueCount) {
+        <a class="chore-banner" routerLink="/chores">
+          {{ status?.chores?.dueCount }} zadanie/nia do zrobienia — otwórz listę
+        </a>
+      }
 
       @if (error) {
         <p class="banner">{{ error }}</p>
@@ -166,6 +173,16 @@ import { Router } from '@angular/router';
         color: var(--danger);
         padding: 0.75rem 1rem;
         border-radius: 10px;
+      }
+      .chore-banner {
+        display: block;
+        margin-bottom: 1rem;
+        padding: 0.85rem 1rem;
+        border-radius: 12px;
+        background: color-mix(in srgb, var(--accent) 14%, transparent);
+        color: var(--accent);
+        text-decoration: none;
+        font-weight: 600;
       }
       .grid {
         display: grid;

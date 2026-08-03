@@ -12,7 +12,8 @@ import {
   type ClientRow,
   type ServiceRow,
 } from "./db.js";
-import { buildSnapshots, publishUsageStates } from "./mqtt.js";
+import { buildSnapshots, publishChoreStates, publishUsageStates } from "./mqtt.js";
+import { sendDueTaskEmails } from "./mail.js";
 import { isoNow, todayInTimezone } from "./time.js";
 
 export type WorkerState = {
@@ -72,6 +73,10 @@ async function tick(): Promise<void> {
     await closeIdleSessions();
     await syncBlocks();
     publishUsageStates(buildSnapshots());
+    publishChoreStates();
+    await sendDueTaskEmails().catch((err) => {
+      console.error("[mail] notify failed", err instanceof Error ? err.message : err);
+    });
     state.lastPollAt = isoNow();
     state.lastError = null;
   } catch (err) {

@@ -50,6 +50,15 @@ export const env = {
     discoveryPrefix: process.env.MQTT_DISCOVERY_PREFIX ?? "homeassistant",
     baseTopic: process.env.MQTT_BASE_TOPIC ?? "family_gate",
   },
+  smtp: {
+    host: process.env.SMTP_HOST ?? "",
+    port: int("SMTP_PORT", 587),
+    secure: process.env.SMTP_SECURE === "true",
+    user: process.env.SMTP_USER ?? "",
+    password: process.env.SMTP_PASSWORD ?? "",
+    from: process.env.SMTP_FROM ?? process.env.SMTP_USER ?? "",
+    to: process.env.NOTIFY_EMAIL ?? "",
+  },
 };
 
 export function isMqttEnabled(): boolean {
@@ -58,4 +67,8 @@ export function isMqttEnabled(): boolean {
 
 export function isAdguardConfigured(): boolean {
   return Boolean(env.adguard.url && env.adguard.user && env.adguard.password);
+}
+
+export function isSmtpConfigured(): boolean {
+  return Boolean(env.smtp.host && env.smtp.to && env.smtp.from);
 }

@@ -17,7 +17,8 @@ import { Router } from '@angular/router';
           <p class="sub">Archiwum zużycia</p>
         </div>
         <nav>
-          <a routerLink="/">Dziś</a>
+          <a routerLink="/">TV</a>
+          <a routerLink="/chores">Zadania</a>
           <a routerLink="/history">Archiwum</a>
           <button type="button" class="linkish" (click)="logout()">Wyloguj</button>
         </nav>

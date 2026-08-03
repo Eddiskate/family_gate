@@ -41,6 +41,34 @@ export interface Status {
   };
   mqtt: { enabled: boolean; connected: boolean };
   adguard: { configured: boolean; url: string };
+  smtp?: { configured: boolean };
+  chores?: { dueCount: number };
+}
+
+export type RecurrenceType = 'daily' | 'weekly' | 'every_n_days' | 'once';
+
+export interface ChoreTask {
+  id: number;
+  groupId: number;
+  groupName: string;
+  title: string;
+  notes: string;
+  recurrenceType: RecurrenceType;
+  recurrenceInterval: number;
+  weekday: number | null;
+  nextDueDate: string | null;
+  lastDoneAt: string | null;
+  enabled: boolean;
+  notifyEmail: boolean;
+  status: 'overdue' | 'due_today' | 'upcoming' | 'done' | 'disabled';
+}
+
+export interface ChoreGroup {
+  id: number;
+  name: string;
+  description: string;
+  sortOrder: number;
+  tasks: ChoreTask[];
 }
 
 @Injectable({ providedIn: 'root' })
@@ -103,5 +131,64 @@ export class ApiService {
       `/api/clients/${clientId}/services/${serviceId}/bonus`,
       { seconds },
     );
+  }
+
+  choreGroups(): Observable<ChoreGroup[]> {
+    return this.http.get<ChoreGroup[]>('/api/chores/groups');
+  }
+
+  choreDue(): Observable<ChoreTask[]> {
+    return this.http.get<ChoreTask[]>('/api/chores/due');
+  }
+
+  createChoreGroup(body: {
+    name: string;
+    description?: string;
+  }): Observable<ChoreGroup> {
+    return this.http.post<ChoreGroup>('/api/chores/groups', body);
+  }
+
+  deleteChoreGroup(id: number): Observable<{ ok: boolean }> {
+    return this.http.delete<{ ok: boolean }>(`/api/chores/groups/${id}`);
+  }
+
+  createChoreTask(body: {
+    groupId: number;
+    title: string;
+    notes?: string;
+    recurrenceType: RecurrenceType;
+    recurrenceInterval?: number;
+    weekday?: number | null;
+    nextDueDate?: string | null;
+    notifyEmail?: boolean;
+  }): Observable<ChoreTask> {
+    return this.http.post<ChoreTask>('/api/chores/tasks', body);
+  }
+
+  updateChoreTask(
+    id: number,
+    body: Partial<{
+      title: string;
+      notes: string;
+      recurrenceType: RecurrenceType;
+      recurrenceInterval: number;
+      weekday: number | null;
+      nextDueDate: string | null;
+      notifyEmail: boolean;
+      enabled: boolean;
+    }>,
+  ): Observable<ChoreTask> {
+    return this.http.put<ChoreTask>(`/api/chores/tasks/${id}`, body);
+  }
+
+  deleteChoreTask(id: number): Observable<{ ok: boolean }> {
+    return this.http.delete<{ ok: boolean }>(`/api/chores/tasks/${id}`);
+  }
+
+  completeChoreTask(
+    id: number,
+    body?: { nextDueDate?: string | null; notes?: string },
+  ): Observable<ChoreTask> {
+    return this.http.post<ChoreTask>(`/api/chores/tasks/${id}/complete`, body ?? {});
   }
 }
