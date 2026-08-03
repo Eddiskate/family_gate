@@ -3,12 +3,20 @@
 FROM node:22-bookworm AS build
 WORKDIR /app
 
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 
-RUN npm install
+# Retry npm install — EasyPanel builds sometimes hit transient ENETUNREACH to registry.npmjs.org
+RUN npm config set fetch-retries 5 \
+  && npm config set fetch-retry-mintimeout 20000 \
+  && npm config set fetch-retry-maxtimeout 120000 \
+  && for i in 1 2 3 4 5; do \
+       npm ci && break || \
+       (echo "npm ci failed (attempt $i), retrying…" && sleep $((i * 15))); \
+     done \
+  && test -d node_modules
 
 COPY packages/shared packages/shared
 COPY apps/api apps/api
@@ -27,7 +35,7 @@ ENV HOST=0.0.0.0
 ENV DATA_DIR=/app/data
 ENV WEB_DIST_DIR=/app/public
 
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/api/package.json apps/api/
 COPY --from=build /app/node_modules ./node_modules
