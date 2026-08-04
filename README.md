@@ -58,7 +58,23 @@ Panel: `http://localhost:3036` — hasło z `PARENT_PASSWORD`.
 | `MQTT_DISCOVERY_PREFIX` | `homeassistant` |
 | `MQTT_BASE_TOPIC` | `family_gate` |
 
-## Home Assistant
+## Zadania (grupy + przypomnienia)
+
+Zakładka **Zadania** (`/chores`):
+- grupy (np. Basen, Akwarium)
+- zadania z cyklem: codziennie / co N dni / dzień tygodnia / jednorazowo
+- oznaczanie **Wykonano** → automatyczny kolejny termin (albo ręczna data)
+- banner na dashboardzie TV przy zaległych / dzisiejszych
+
+Seed startowy: Basen (filtr, antyglon, odkurzanie w sobotę) + Akwarium (wymiana wody).
+
+E-mail (opcjonalnie): `SMTP_*` + `NOTIFY_EMAIL` — raz dziennie lista zadań due/overdue.
+
+**Home Assistant (MQTT):** urządzenie `Family Gate Zadania`
+- `sensor.family_gate_chores_due` / `_overdue`
+- `binary_sensor.family_gate_chores_any_due`
+- per zadanie: binary_sensor (do zrobienia), sensor terminu/statusu, **button wykonano**
+
 
 Wymagany broker MQTT z włączonym discovery.
 

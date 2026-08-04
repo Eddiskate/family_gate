@@ -468,6 +468,122 @@ export function seedWasteScheduleIfMissing(): void {
   });
 }
 
+export type ChoresImportPayload = {
+  groups: Array<{
+    name: string;
+    description?: string;
+    sortOrder?: number;
+    tasks?: Array<{
+      title: string;
+      notes?: string;
+      recurrenceType: RecurrenceType;
+      recurrenceInterval?: number;
+      weekday?: number | null;
+      calendarDates?: string[];
+      nextDueDate?: string | null;
+      notifyEmail?: boolean;
+      enabled?: boolean;
+    }>;
+  }>;
+};
+
+export function importChoresFromJson(payload: ChoresImportPayload): {
+  groupsCreated: number;
+  groupsUpdated: number;
+  tasksCreated: number;
+  tasksUpdated: number;
+} {
+  if (!payload?.groups || !Array.isArray(payload.groups)) {
+    throw new Error("Invalid JSON: expected { groups: [...] }");
+  }
+
+  let groupsCreated = 0;
+  let groupsUpdated = 0;
+  let tasksCreated = 0;
+  let tasksUpdated = 0;
+  const db = getDb();
+
+  for (const g of payload.groups) {
+    if (!g.name?.trim()) continue;
+    const existing = db
+      .prepare("SELECT id FROM task_groups WHERE name = ?")
+      .get(g.name.trim()) as { id: number } | undefined;
+
+    let groupId: number;
+    if (existing) {
+      updateGroup(existing.id, {
+        description: g.description,
+        sortOrder: g.sortOrder,
+      });
+      groupId = existing.id;
+      groupsUpdated += 1;
+    } else {
+      const created = createGroup({
+        name: g.name,
+        description: g.description,
+        sortOrder: g.sortOrder,
+      });
+      groupId = created.id;
+      groupsCreated += 1;
+    }
+
+    for (const t of g.tasks ?? []) {
+      if (!t.title?.trim() || !t.recurrenceType) continue;
+      const existingTask = db
+        .prepare("SELECT id FROM tasks WHERE group_id = ? AND title = ?")
+        .get(groupId, t.title.trim()) as { id: number } | undefined;
+
+      if (t.recurrenceType === "calendar" && t.calendarDates?.length) {
+        const before = existingTask ? 1 : 0;
+        upsertCalendarTask({
+          groupId,
+          title: t.title.trim(),
+          notes: t.notes ?? "",
+          calendarDates: t.calendarDates,
+        });
+        if (before) tasksUpdated += 1;
+        else tasksCreated += 1;
+        continue;
+      }
+
+      if (existingTask) {
+        updateTask(existingTask.id, {
+          notes: t.notes,
+          recurrenceType: t.recurrenceType,
+          recurrenceInterval: t.recurrenceInterval,
+          weekday: t.weekday,
+          nextDueDate: t.nextDueDate,
+          notifyEmail: t.notifyEmail,
+          enabled: t.enabled,
+        });
+        if (t.calendarDates) {
+          db.prepare(`UPDATE tasks SET calendar_dates = ? WHERE id = ?`).run(
+            JSON.stringify(t.calendarDates),
+            existingTask.id,
+          );
+        }
+        tasksUpdated += 1;
+      } else {
+        createTask({
+          groupId,
+          title: t.title,
+          notes: t.notes,
+          recurrenceType: t.recurrenceType,
+          recurrenceInterval: t.recurrenceInterval,
+          weekday: t.weekday,
+          calendarDates: t.calendarDates,
+          nextDueDate: t.nextDueDate,
+          notifyEmail: t.notifyEmail,
+          enabled: t.enabled,
+        });
+        tasksCreated += 1;
+      }
+    }
+  }
+
+  return { groupsCreated, groupsUpdated, tasksCreated, tasksUpdated };
+}
+
 function upsertCalendarTask(input: {
   groupId: number;
   title: string;

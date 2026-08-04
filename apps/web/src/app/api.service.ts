@@ -192,4 +192,20 @@ export class ApiService {
   ): Observable<ChoreTask> {
     return this.http.post<ChoreTask>(`/api/chores/tasks/${id}/complete`, body ?? {});
   }
+
+  importChores(payload: unknown): Observable<{
+    ok: boolean;
+    groupsCreated: number;
+    groupsUpdated: number;
+    tasksCreated: number;
+    tasksUpdated: number;
+  }> {
+    return this.http.post<{
+      ok: boolean;
+      groupsCreated: number;
+      groupsUpdated: number;
+      tasksCreated: number;
+      tasksUpdated: number;
+    }>('/api/chores/import', payload);
+  }
 }

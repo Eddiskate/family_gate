@@ -56,7 +56,15 @@ import { clearAuth } from './auth.interceptor';
       <section class="toolbar">
         <button type="button" (click)="showNewGroup = !showNewGroup">+ Grupa</button>
         <button type="button" class="ghost" (click)="showNewTask = !showNewTask">+ Zadanie</button>
+        <label class="import-btn">
+          Import JSON
+          <input type="file" accept="application/json,.json" (change)="onImportFile($event)" hidden />
+        </label>
       </section>
+
+      @if (importMsg) {
+        <p class="ok-banner">{{ importMsg }}</p>
+      }
 
       @if (showNewGroup) {
         <form class="form" (submit)="$event.preventDefault(); createGroup()">
@@ -184,7 +192,23 @@ import { clearAuth } from './auth.interceptor';
       .due-row:first-of-type, .task:first-of-type { border-top: 0; }
       .due-row.overdue, .task.overdue { background: color-mix(in srgb, var(--danger) 8%, transparent); margin: 0 -0.5rem; padding-left: 0.5rem; padding-right: 0.5rem; border-radius: 8px; }
       .task.due { background: color-mix(in srgb, var(--accent) 8%, transparent); margin: 0 -0.5rem; padding-left: 0.5rem; padding-right: 0.5rem; border-radius: 8px; }
-      .toolbar { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+      .toolbar { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; align-items: center; }
+      .import-btn {
+        display: inline-flex;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.85rem;
+        cursor: pointer;
+        color: var(--text);
+      }
+      .ok-banner {
+        background: color-mix(in srgb, var(--ok) 15%, transparent);
+        color: var(--ok);
+        padding: 0.75rem 1rem;
+        border-radius: 10px;
+      }
       .group-head { display: flex; justify-content: space-between; gap: 1rem; align-items: start; }
       h2, h3 { margin: 0 0 0.5rem; }
       .muted { color: var(--muted); font-size: 0.9rem; margin: 0.2rem 0; }
@@ -210,6 +234,7 @@ export class ChoresComponent implements OnInit {
   due: ChoreTask[] = [];
   dueCount = 0;
   error = '';
+  importMsg = '';
   showNewGroup = false;
   showNewTask = false;
   nextDates: Record<number, string> = {};
@@ -368,6 +393,32 @@ export class ChoresComponent implements OnInit {
       next: () => this.reload(),
       error: () => (this.error = 'Usuwanie grupy nieudane.'),
     });
+  }
+
+  onImportFile(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    this.error = '';
+    this.importMsg = '';
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const payload = JSON.parse(String(reader.result));
+        this.api.importChores(payload).subscribe({
+          next: (res) => {
+            this.importMsg = `Import OK — grupy +${res.groupsCreated}/~${res.groupsUpdated}, zadania +${res.tasksCreated}/~${res.tasksUpdated}`;
+            this.reload();
+          },
+          error: () => (this.error = 'Import JSON nieudany.'),
+        });
+      } catch {
+        this.error = 'Niepoprawny plik JSON.';
+      } finally {
+        input.value = '';
+      }
+    };
+    reader.readAsText(file);
   }
 
   logout(): void {

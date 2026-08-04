@@ -7,10 +7,12 @@ import {
   createTask,
   deleteGroup,
   deleteTask,
+  importChoresFromJson,
   listDueTasks,
   listGroupsWithTasks,
   updateGroup,
   updateTask,
+  type ChoresImportPayload,
   type RecurrenceType,
 } from "./chores.js";
 import { getDb, parseIps, type ClientRow } from "./db.js";
@@ -246,6 +248,18 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/chores/due", async () => listDueTasks());
 
   app.get("/api/chores/groups", async () => listGroupsWithTasks());
+
+  app.post<{
+    Body: ChoresImportPayload;
+  }>("/api/chores/import", async (request, reply) => {
+    try {
+      const result = importChoresFromJson(request.body);
+      publishChoreStates();
+      return { ok: true, ...result };
+    } catch (err) {
+      return reply.code(400).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
 
   app.post<{
     Body: { name?: string; description?: string; sortOrder?: number };
