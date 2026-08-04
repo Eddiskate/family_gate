@@ -1,7 +1,13 @@
 import { getDb } from "./db.js";
 import { isoNow, todayInTimezone } from "./time.js";
+import {
+  nextCalendarDate,
+  nextCalendarDateAfter,
+  WASTE_GRAY_REMINDER_DATES_2026,
+  WASTE_YELLOW_REMINDER_DATES_2026,
+} from "./waste-schedule.js";
 
-export type RecurrenceType = "daily" | "weekly" | "every_n_days" | "once";
+export type RecurrenceType = "daily" | "weekly" | "every_n_days" | "once" | "calendar";
 
 export type TaskGroupRow = {
   id: number;
@@ -18,6 +24,7 @@ export type TaskRow = {
   recurrence_type: RecurrenceType;
   recurrence_interval: number;
   weekday: number | null;
+  calendar_dates: string;
   next_due_date: string | null;
   last_done_at: string | null;
   enabled: number;
@@ -34,6 +41,7 @@ export type TaskDto = {
   recurrenceType: RecurrenceType;
   recurrenceInterval: number;
   weekday: number | null;
+  calendarDates: string[];
   nextDueDate: string | null;
   lastDoneAt: string | null;
   enabled: boolean;
@@ -78,9 +86,13 @@ export function computeNextDueDate(opts: {
   recurrenceType: RecurrenceType;
   recurrenceInterval: number;
   weekday: number | null;
+  calendarDates?: string[];
 }): string | null {
-  const { fromDate, recurrenceType, recurrenceInterval, weekday } = opts;
+  const { fromDate, recurrenceType, recurrenceInterval, weekday, calendarDates } = opts;
   if (recurrenceType === "once") return null;
+  if (recurrenceType === "calendar") {
+    return nextCalendarDateAfter(calendarDates ?? [], fromDate);
+  }
   if (recurrenceType === "daily") {
     return addDays(fromDate, Math.max(1, recurrenceInterval || 1));
   }
@@ -102,9 +114,13 @@ export function initialDueDate(opts: {
   recurrenceType: RecurrenceType;
   recurrenceInterval: number;
   weekday: number | null;
+  calendarDates?: string[];
   startDate?: string;
 }): string | null {
   const today = opts.startDate ?? todayInTimezone();
+  if (opts.recurrenceType === "calendar") {
+    return nextCalendarDate(opts.calendarDates ?? [], today);
+  }
   if (opts.recurrenceType === "once") return today;
   if (opts.recurrenceType === "weekly") {
     const target = opts.weekday ?? 6;
@@ -117,6 +133,16 @@ export function initialDueDate(opts: {
     });
   }
   return today;
+}
+
+function parseCalendarDates(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.map(String).sort() : [];
+  } catch {
+    return [];
+  }
 }
 
 function taskStatus(row: TaskRow, today: string): TaskDto["status"] {
@@ -137,6 +163,7 @@ function mapTask(row: TaskRow, groupName: string, today = todayInTimezone()): Ta
     recurrenceType: row.recurrence_type,
     recurrenceInterval: row.recurrence_interval,
     weekday: row.weekday,
+    calendarDates: parseCalendarDates(row.calendar_dates),
     nextDueDate: row.next_due_date,
     lastDoneAt: row.last_done_at,
     enabled: row.enabled === 1,
@@ -222,6 +249,7 @@ export function createTask(input: {
   recurrenceType: RecurrenceType;
   recurrenceInterval?: number;
   weekday?: number | null;
+  calendarDates?: string[];
   nextDueDate?: string | null;
   notifyEmail?: boolean;
   enabled?: boolean;
@@ -234,6 +262,7 @@ export function createTask(input: {
 
   const interval = Math.max(1, input.recurrenceInterval ?? 1);
   const weekday = input.weekday ?? null;
+  const calendarDates = (input.calendarDates ?? []).map(String).sort();
   const nextDue =
     input.nextDueDate !== undefined
       ? input.nextDueDate
@@ -241,14 +270,15 @@ export function createTask(input: {
           recurrenceType: input.recurrenceType,
           recurrenceInterval: interval,
           weekday,
+          calendarDates,
         });
 
   const info = db
     .prepare(
       `INSERT INTO tasks (
          group_id, title, notes, recurrence_type, recurrence_interval, weekday,
-         next_due_date, last_done_at, enabled, notify_email, last_notified_date
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
+         calendar_dates, next_due_date, last_done_at, enabled, notify_email, last_notified_date
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)`,
     )
     .run(
       input.groupId,
@@ -257,6 +287,7 @@ export function createTask(input: {
       input.recurrenceType,
       interval,
       weekday,
+      JSON.stringify(calendarDates),
       nextDue,
       input.enabled === false ? 0 : 1,
       input.notifyEmail ? 1 : 0,
@@ -336,6 +367,7 @@ export function completeTask(
       recurrenceType: current.recurrence_type,
       recurrenceInterval: current.recurrence_interval,
       weekday: current.weekday,
+      calendarDates: parseCalendarDates(current.calendar_dates),
     });
   }
 
@@ -402,4 +434,76 @@ export function seedChoresIfEmpty(): void {
     recurrenceInterval: 7,
     notifyEmail: true,
   });
+}
+
+/** Idempotent seed for Racibórz Brzezie waste calendar (works on existing prod DB). */
+export function seedWasteScheduleIfMissing(): void {
+  const db = getDb();
+  const existing = db
+    .prepare("SELECT id FROM task_groups WHERE name = ?")
+    .get("Wywóz śmieci") as { id: number } | undefined;
+
+  let groupId = existing?.id;
+  if (!groupId) {
+    const group = createGroup({
+      name: "Wywóz śmieci",
+      description: "Racibórz Brzezie 1 + Dębicz — przygotowanie dzień przed wywozem (2026)",
+      sortOrder: 10,
+    });
+    groupId = group.id;
+  }
+
+  upsertCalendarTask({
+    groupId,
+    title: "Przygotowanie śmieci mieszane (szare)",
+    notes: "Dzień przed wywozem odpadów komunalnych zmieszanych",
+    calendarDates: [...WASTE_GRAY_REMINDER_DATES_2026],
+  });
+
+  upsertCalendarTask({
+    groupId,
+    title: "Przygotowanie śmieci segregacja (żółte)",
+    notes: "Dzień przed wywozem plastiku / szkła / makulatury",
+    calendarDates: [...WASTE_YELLOW_REMINDER_DATES_2026],
+  });
+}
+
+function upsertCalendarTask(input: {
+  groupId: number;
+  title: string;
+  notes: string;
+  calendarDates: string[];
+}): void {
+  const db = getDb();
+  const today = todayInTimezone();
+  const datesJson = JSON.stringify(input.calendarDates);
+  const nextDue = nextCalendarDate(input.calendarDates, today);
+
+  const existing = db
+    .prepare("SELECT id, next_due_date FROM tasks WHERE group_id = ? AND title = ?")
+    .get(input.groupId, input.title) as { id: number; next_due_date: string | null } | undefined;
+
+  if (!existing) {
+    createTask({
+      groupId: input.groupId,
+      title: input.title,
+      notes: input.notes,
+      recurrenceType: "calendar",
+      calendarDates: input.calendarDates,
+      notifyEmail: true,
+    });
+    return;
+  }
+
+  // Refresh calendar + next due if current due is missing or no longer in schedule
+  const keepDue =
+    existing.next_due_date && input.calendarDates.includes(existing.next_due_date)
+      ? existing.next_due_date
+      : nextDue;
+
+  db.prepare(
+    `UPDATE tasks
+     SET notes = ?, recurrence_type = 'calendar', calendar_dates = ?, next_due_date = ?, notify_email = 1, enabled = 1
+     WHERE id = ?`,
+  ).run(input.notes, datesJson, keepDue, existing.id);
 }

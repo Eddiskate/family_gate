@@ -45,7 +45,7 @@ export interface Status {
   chores?: { dueCount: number };
 }
 
-export type RecurrenceType = 'daily' | 'weekly' | 'every_n_days' | 'once';
+export type RecurrenceType = 'daily' | 'weekly' | 'every_n_days' | 'once' | 'calendar';
 
 export interface ChoreTask {
   id: number;
@@ -56,6 +56,7 @@ export interface ChoreTask {
   recurrenceType: RecurrenceType;
   recurrenceInterval: number;
   weekday: number | null;
+  calendarDates?: string[];
   nextDueDate: string | null;
   lastDoneAt: string | null;
   enabled: boolean;

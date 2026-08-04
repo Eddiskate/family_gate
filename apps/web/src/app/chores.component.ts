@@ -290,6 +290,8 @@ export class ChoresComponent implements OnInit {
         const days = ['nd', 'pn', 'wt', 'śr', 'cz', 'pt', 'sb'];
         return `co tydzień (${days[task.weekday ?? 6]})`;
       }
+      case 'calendar':
+        return `kalendarz (${task.calendarDates?.length ?? 0} dat)`;
       case 'once':
         return 'jednorazowo';
     }

@@ -122,6 +122,7 @@ export function initDb(): Database.Database {
       recurrence_type TEXT NOT NULL,
       recurrence_interval INTEGER NOT NULL DEFAULT 1,
       weekday INTEGER,
+      calendar_dates TEXT NOT NULL DEFAULT '[]',
       next_due_date TEXT,
       last_done_at TEXT,
       enabled INTEGER NOT NULL DEFAULT 1,
@@ -152,12 +153,20 @@ export function initDb(): Database.Database {
 }
 
 function migrateSchema(): void {
-  const cols = db.prepare("PRAGMA table_info(usage_daily)").all() as Array<{ name: string }>;
-  const names = new Set(cols.map((c) => c.name));
-  if (!names.has("bonus_seconds")) {
+  const usageCols = db.prepare("PRAGMA table_info(usage_daily)").all() as Array<{ name: string }>;
+  const usageNames = new Set(usageCols.map((c) => c.name));
+  if (!usageNames.has("bonus_seconds")) {
     db.exec(
       "ALTER TABLE usage_daily ADD COLUMN bonus_seconds INTEGER NOT NULL DEFAULT 0",
     );
+  }
+
+  const taskCols = db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>;
+  if (taskCols.length > 0) {
+    const taskNames = new Set(taskCols.map((c) => c.name));
+    if (!taskNames.has("calendar_dates")) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN calendar_dates TEXT NOT NULL DEFAULT '[]'`);
+    }
   }
 }
 
