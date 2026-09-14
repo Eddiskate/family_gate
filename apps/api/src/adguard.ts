@@ -178,15 +178,21 @@ export async function getQueryLog(params: {
   );
 }
 
+/** True when AdGuard actually blocked/rewrote the answer — not merely "NotFiltered*". */
 export function isQueryBlocked(item: QueryLogItem): boolean {
-  const reason = (item.reason ?? "").toLowerCase();
-  const status = (item.status ?? "").toLowerCase();
+  const reason = item.reason ?? "";
+  // Do NOT use includes("filtered"): "NotFilteredNotFound" contains that substring.
   return (
-    reason.includes("filtered") ||
-    reason.includes("blocked") ||
-    reason.includes("blacklist") ||
-    status.includes("filtered") ||
-    status.includes("blocked")
+    reason === "FilteredBlackList" ||
+    reason === "FilteredBlockedService" ||
+    reason === "FilteredSafeBrowsing" ||
+    reason === "FilteredParental" ||
+    reason === "FilteredInvalid" ||
+    reason === "FilteredSafeSearch" ||
+    reason === "Rewrite" ||
+    reason === "RewriteEtcHosts" ||
+    reason === "RewriteRule" ||
+    reason === "DNSRewriteRule"
   );
 }
 
