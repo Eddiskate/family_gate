@@ -24,7 +24,27 @@ function int(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
-const dataDir = path.resolve(process.env.DATA_DIR ?? "./data");
+/**
+ * EasyPanel/Docker: relative DATA_DIR (e.g. ./data) resolves under WORKDIR
+ * (/app/apps/api/data) which is wiped on every redeploy.
+ * Always prefer absolute /app/data in production containers.
+ */
+function resolveDataDir(): string {
+  const raw = (process.env.DATA_DIR ?? "./data").trim();
+  if (path.isAbsolute(raw)) {
+    return raw;
+  }
+  const normalized = raw.replace(/^\.\//, "");
+  if (process.env.NODE_ENV === "production" || fs.existsSync("/.dockerenv")) {
+    console.warn(
+      `[config] DATA_DIR="${raw}" is relative — using /app/data so EasyPanel volume persists across deploys`,
+    );
+    return "/app/data";
+  }
+  return path.resolve(process.cwd(), normalized);
+}
+
+const dataDir = resolveDataDir();
 
 export const env = {
   port: int("PORT", 3036),

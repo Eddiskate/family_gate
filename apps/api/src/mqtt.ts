@@ -514,6 +514,30 @@ export function publishUsageStates(snapshots: UsageSnapshot[]): void {
   }
 }
 
+/** Edge pulse when a service newly hits the block — use in HA to kill the TV app/stream. */
+export function publishBlockEvents(
+  events: Array<{ clientId: number; serviceId: string }>,
+): void {
+  if (!client || !connected || events.length === 0) return;
+  const db = getDb();
+  for (const ev of events) {
+    const row = db
+      .prepare("SELECT name FROM clients WHERE id = ?")
+      .get(ev.clientId) as { name: string } | undefined;
+    if (!row) continue;
+    const clientSlug = slugify(row.name);
+    const topic = `${env.mqtt.baseTopic}/${clientSlug}/event`;
+    const payload = {
+      action: "service_blocked",
+      service: ev.serviceId,
+      client: row.name,
+      at: new Date().toISOString(),
+    };
+    client.publish(topic, JSON.stringify(payload), { qos: 1 });
+    console.log(`[mqtt] block event ${clientSlug}/${ev.serviceId}`);
+  }
+}
+
 async function handleCommand(topic: string, payload: string): Promise<void> {
   if (!callbacks) return;
   const parts = topic.split("/");

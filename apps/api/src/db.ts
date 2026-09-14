@@ -55,6 +55,7 @@ export function getDb(): Database.Database {
 export function initDb(): Database.Database {
   fs.mkdirSync(env.dataDir, { recursive: true });
   db = new Database(env.dbPath);
+  console.log(`[db] sqlite=${env.dbPath}`);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
 

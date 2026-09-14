@@ -1,7 +1,9 @@
 import {
   getQueryLog,
+  isQueryBlocked,
   matchService,
   setClientBlockedService,
+  syncManagedClientBlockRules,
   type QueryLogItem,
 } from "./adguard.js";
 import { env, isAdguardConfigured } from "./config.js";
@@ -12,7 +14,12 @@ import {
   type ClientRow,
   type ServiceRow,
 } from "./db.js";
-import { buildSnapshots, publishChoreStates, publishUsageStates } from "./mqtt.js";
+import {
+  buildSnapshots,
+  publishBlockEvents,
+  publishChoreStates,
+  publishUsageStates,
+} from "./mqtt.js";
 import { sendDueTaskEmails } from "./mail.js";
 import { isoNow, todayInTimezone } from "./time.js";
 
@@ -124,6 +131,8 @@ async function pollActivity(): Promise<void> {
 
       for (const item of ordered) {
         if (item.time <= lastProcessed) continue;
+        // Already blocked by AdGuard — do not keep accruing usage / extending sessions.
+        if (isQueryBlocked(item)) continue;
         const domain = item.question?.name;
         if (!domain) continue;
         const serviceId = matchService(domain, patterns);
@@ -198,6 +207,36 @@ function accrueOpenSessions(): void {
     if (!Number.isFinite(last)) continue;
     if (now - last >= env.idleTimeoutSec * 1000) continue;
 
+    // Do not keep pumping minutes after limit / force-block (e.g. cached stream).
+    const lim = db
+      .prepare(
+        `SELECT l.force_blocked, l.daily_limit_seconds,
+                COALESCE(u.used_seconds, 0) AS used_seconds,
+                COALESCE(u.bonus_seconds, 0) AS bonus_seconds
+         FROM limits l
+         LEFT JOIN usage_daily u
+           ON u.client_id = l.client_id AND u.service_id = l.service_id AND u.date = ?
+         WHERE l.client_id = ? AND l.service_id = ?`,
+      )
+      .get(date, session.client_id, session.service_id) as
+      | {
+          force_blocked: number;
+          daily_limit_seconds: number;
+          used_seconds: number;
+          bonus_seconds: number;
+        }
+      | undefined;
+
+    if (lim) {
+      const effective = lim.daily_limit_seconds + lim.bonus_seconds;
+      if (
+        lim.force_blocked === 1 ||
+        lim.used_seconds >= effective
+      ) {
+        continue;
+      }
+    }
+
     ensureUsageRow(session.client_id, session.service_id, date);
     db.prepare(
       `UPDATE usage_daily
@@ -205,6 +244,15 @@ function accrueOpenSessions(): void {
        WHERE client_id = ? AND service_id = ? AND date = ?`,
     ).run(env.pollIntervalSec, session.client_id, session.service_id, date);
   }
+}
+
+function closeSessionsFor(clientId: number, serviceId: string): void {
+  getDb()
+    .prepare(
+      `UPDATE sessions SET ended_at = ?
+       WHERE client_id = ? AND service_id = ? AND ended_at IS NULL`,
+    )
+    .run(isoNow(), clientId, serviceId);
 }
 
 function ensureUsageRow(clientId: number, serviceId: string, date: string): void {
@@ -255,6 +303,7 @@ async function syncBlocks(): Promise<void> {
       `SELECT
          c.id AS client_id,
          c.adguard_name,
+         c.ips,
          l.service_id,
          l.daily_limit_seconds,
          l.enabled,
@@ -271,6 +320,7 @@ async function syncBlocks(): Promise<void> {
     .all(date) as Array<{
     client_id: number;
     adguard_name: string;
+    ips: string;
     service_id: string;
     daily_limit_seconds: number;
     enabled: number;
@@ -280,20 +330,36 @@ async function syncBlocks(): Promise<void> {
     blocked_at: string | null;
   }>;
 
+  const domainBlocks: Array<{ ips: string[]; domains: string[] }> = [];
+  const newlyBlocked: Array<{ clientId: number; serviceId: string }> = [];
+
   for (const row of rows) {
     const effectiveLimit = row.daily_limit_seconds + row.bonus_seconds;
     const shouldBlock =
       row.force_blocked === 1 ||
       (row.enabled === 1 && row.used_seconds >= effectiveLimit);
+    const ips = parseIps(row.ips);
 
     try {
-      await setClientBlockedService(row.adguard_name, row.service_id, shouldBlock);
+      await setClientBlockedService(
+        row.adguard_name,
+        row.service_id,
+        shouldBlock,
+        ips,
+      );
       if (shouldBlock && !row.blocked_at) {
         ensureUsageRow(row.client_id, row.service_id, date);
         db.prepare(
           `UPDATE usage_daily SET blocked_at = ?
            WHERE client_id = ? AND service_id = ? AND date = ? AND blocked_at IS NULL`,
         ).run(isoNow(), row.client_id, row.service_id, date);
+        newlyBlocked.push({
+          clientId: row.client_id,
+          serviceId: row.service_id,
+        });
+      }
+      if (shouldBlock) {
+        closeSessionsFor(row.client_id, row.service_id);
       }
       if (!shouldBlock && row.blocked_at) {
         db.prepare(
@@ -301,12 +367,33 @@ async function syncBlocks(): Promise<void> {
            WHERE client_id = ? AND service_id = ? AND date = ?`,
         ).run(row.client_id, row.service_id, date);
       }
+      if (shouldBlock) {
+        const svc = db
+          .prepare("SELECT domain_patterns FROM services WHERE id = ?")
+          .get(row.service_id) as { domain_patterns: string } | undefined;
+        if (svc) {
+          domainBlocks.push({
+            ips,
+            domains: parsePatterns(svc.domain_patterns),
+          });
+        }
+      }
     } catch (err) {
       console.error(
         `[worker] block sync failed ${row.adguard_name}/${row.service_id}`,
         err,
       );
     }
+  }
+
+  try {
+    await syncManagedClientBlockRules(domainBlocks);
+  } catch (err) {
+    console.error("[worker] managed filter rules sync failed", err);
+  }
+
+  if (newlyBlocked.length) {
+    publishBlockEvents(newlyBlocked);
   }
 }
 
@@ -359,13 +446,14 @@ async function ensureDailyReset(): Promise<void> {
   if (isAdguardConfigured()) {
     const clients = db
       .prepare(
-        `SELECT c.adguard_name, l.service_id, l.force_blocked
+        `SELECT c.adguard_name, c.ips, l.service_id, l.force_blocked
          FROM clients c
          JOIN limits l ON l.client_id = c.id
          WHERE c.active = 1`,
       )
       .all() as Array<{
       adguard_name: string;
+      ips: string;
       service_id: string;
       force_blocked: number;
     }>;
@@ -373,7 +461,12 @@ async function ensureDailyReset(): Promise<void> {
     for (const c of clients) {
       if (c.force_blocked === 1) continue;
       try {
-        await setClientBlockedService(c.adguard_name, c.service_id, false);
+        await setClientBlockedService(
+          c.adguard_name,
+          c.service_id,
+          false,
+          parseIps(c.ips),
+        );
       } catch (err) {
         console.error("[worker] daily unblock failed", c, err);
       }
